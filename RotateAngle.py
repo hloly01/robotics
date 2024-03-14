@@ -36,19 +36,7 @@ picam2 = Picamera2() # assigns camera variable
 picam2.set_controls({"AfMode": controls.AfModeEnum.Continuous}) # sets auto focus mode
 picam2.start() # activates camera
 time.sleep(1) # wait for camera to start up
-'''
-image = picam2.capture_array("main")
-# Discard alpha channel
-image_3_channel = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
-# Resize the image
-image_resized = cv2.resize(image_3_channel, (224, 224), interpolation=cv2.INTER_AREA)
-# check image size is as expected 
-# Show the image in a window
-cv2.imshow("Picam Image", image)
-time.sleep(5)
-# initialize variables 
-# object_list = []
-'''
+
 num_avg = 5
 
 # Define the class DockActionClient as a subclass of Node
