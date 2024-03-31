@@ -62,6 +62,8 @@ try:
         # Make the PATCH request
         response = requests.patch(update_url, json=data1, headers=Headers)
         '''
+
+        # input for transport team
         if start == 1:
             print("place cup")
         if coffee_info['done'] == 1:
