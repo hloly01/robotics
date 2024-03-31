@@ -13,14 +13,12 @@ try:
         data = r.json()
         # print(data)
 
-        # make sure order of table hasn't been edited, if so edit number in data so that correct values are called
-        airtable_names = [
+        # putting data into dictonaries by subteam
+        airtable_names = {
             (data['records'][0]['fields']['Name']), (data['records'][1]['fields']['Name']), 
             (data['records'][2]['fields']['Name']), (data['records'][3]['fields']['Name']),
             (data['records'][4]['fields']['Name'])
-        ]
-
-        print("airtable names: ", airtable_names)
+        }
         design_info = {
             'design':   data['records'][0]['fields']['Design choice'],
             'arrived':  data['records'][0]['fields']['Arrived at station'], 
@@ -43,6 +41,7 @@ try:
         start = data['records'][3]['fields']['Done']
 
         # print airtable values
+        print("airtable names: ", airtable_names)
         print("start: ", start)
         print("customer name: ", customer_info['name'], "\narrived at customer: ", customer_info['arrived'])
         print("latte arrived: ", latte_info['arrived'], "\nlatte done: ", latte_info['done'])
