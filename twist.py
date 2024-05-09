@@ -1,3 +1,5 @@
+# code for transport team. Tells roomba to turn and updates airtable when arrived
+# ask Hannah for questions about code
 import sys
 import rclpy
 from rclpy.action import ActionClient
@@ -10,6 +12,7 @@ from collections import Counter
 import time
 import requests
 import json
+from airtable_data import airtable
 
 # Put the URL for your Airtable Base here
 URL = 'https://api.airtable.com/v0/appZXeS3vQKy6x41E/Drive' # Format: 'https://api.airtable.com/v0/BaseID/tableName
@@ -22,12 +25,12 @@ class RotateAngleClient(Node):
     # Define a function to initalize the node
     def __init__(self):
         super().__init__('rotate_angle_action_client') # Initialize a node the name dock_action_client
-        
-        # Create an action client using the action type 'RotateAngle' that we imported above 
-        # with the action name 'rotate_angle' which can be found by running ros2 action list -t
         self._action_client = ActionClient(self, RotateAngle, 'rotate_angle')
-        # initalize publisher to drive
-        self.publisher = self.create_publisher(Twist, '/cmd_vel', 10)
+        # intialize lists and dictionaries 
+        self.recent_orders = ['test', 'test']
+        self.queue = []
+        self.first_instance_queue = True
+        self.first_instance = True
         self.arrived = {
             "fields": {
                 "Arrived at station": 1
@@ -38,153 +41,140 @@ class RotateAngleClient(Node):
                 "Done": 0
             }
         }
+        self.reset_start = {
+            "fields": {
+                "Arrived at station": 0
+            }
+        }
+        self.URl = ''
         self.coffee_URL = 'https://api.airtable.com/v0/appZXeS3vQKy6x41E/Drive/recY2LOdyKyHehK5Y'
         self.latte_URL = 'https://api.airtable.com/v0/appZXeS3vQKy6x41E/Drive/recSIyskVTknipb5f'
         self.design_URL = 'https://api.airtable.com/v0/appZXeS3vQKy6x41E/Drive/recJQILiP3Ls6Cy5G'
         self.start_URL = 'https://api.airtable.com/v0/appZXeS3vQKy6x41E/Drive/recTkUKHYPDy8FoCc'
         self.customer_URL = 'https://api.airtable.com/v0/appZXeS3vQKy6x41E/Drive/recPm6ye2Mu5fELGP'
-        timer_period = 1 # set timer 
-        #creates timer that triggers a callback function
-        self.timer = self.create_timer(timer_period, self.timer_callback)
-        self.i = 0 # initialize timer to be zero
-
-    def timer_callback(self):
-        msg = Twist() # Assigns message type "Twist" that has been imported from the std_msgs module above
-        msg.linear.x = .1
-        self.publisher.publish(msg) # Publishes `msg` to topic 
-        self.get_logger().info('Publishing: "%s"' % msg.linear.x) # Prints `msg.data` to console 
-        self.process_and_respond() # go back to processing and respond
-    # Define a function to send the goal to the action server which is already
-    # running on the Create 3 robot. Since this action does not require any request value
-    # as part of the goal message, the only argument of this function is self. 
-    # For more details on this action, review  
-    # https://github.com/iRobotEducation/irobot_create_msgs/blob/humble/action/Dock.action
+        # list of all airtable rows to be updated
+        self.patch_all = [self.coffee_URL, self.latte_URL, self.design_URL, self.start_URL, self.customer_URL]
+        # set all values to 0 when started
+        for url in self.patch_all:
+            response = requests.patch(url, json=self.reset, headers=Headers)
+            response = requests.patch(url, json=self.reset_start, headers=Headers)
+    # ROS stuff
     def send_goal(self, angle):
-
         # Create a variable for the goal request message to be sent to the action server
         goal_msg = RotateAngle.Goal()
         goal_msg.angle = (-3.1415*angle/180)
         goal_msg.max_rotation_speed = .1               
 
-        # Instruct the action client to wait for the action server to become available
         self._action_client.wait_for_server()
-
-        # Sends goal request to the server, returns a future object to the _send_goal_future
-        # attribute of the class, and creates a feedback callback as a new function which
-        # we will define below as 'feedback_callback' 
         self._send_goal_future = self._action_client.send_goal_async(goal_msg, feedback_callback=self.feedback_callback)
-        # Creates a callback that executes a new function 'goal_response_callback'
-        # when the future is complete. This function is defined below.
-        # This happens when the action server accepts or rejects the request
         self._send_goal_future.add_done_callback(self.goal_response_callback)
-        self.process_and_respond()
-    
-    # Define a response callback for when the future is complete. This will 
-    # tell us if the goal request has been accepted or rejected by the server.
-    # Note that because we have a future object we need to pass that in as 
-    # an argument of this function.
+    # more ROS stuff
     def goal_response_callback(self, future):
-
-        # Store the result of the future as a new variable named 'goal_handle'
         goal_handle = future.result()
-
         # Perform a check to see if the goal was accepted or rejected and print to the logger.
         if not goal_handle.accepted:
             self.get_logger().info('Goal rejected :(')
             return
         self.get_logger().info('Goal accepted :)')
-
-        # Now that we know the goal was accepted and we should expect a result,
-        # ask for that result and return a future when received. 
         self._get_result_future = goal_handle.get_result_async()
-
-        # Creates a callback that executes a new function 'get_result_callback'
-        # when the future is complete. This function is defined below.
-        # This happens when the action server accepts or rejects the request
         self._get_result_future.add_done_callback(self.get_result_callback)
     
-    # Define a result callback for when the future is complete. This will 
-    # tell us the result sent to us from the server.
-    # Note that because we have a future object we need to pass that in as 
-    # an argument of this function.
+    # callbacks and ROS stuff
+    # when the roomba arrives, update airtable value to 1
     def get_result_callback(self, future):
-
-        # Store the result from the server in a 'result' variable
         result = future.result().result
-
-        # Print the result to the logger. We know what to ask for 'result.is_docked'
-        # based on the action documentation for the dock action
+        # if successful, value goes to 1
+        if result: 
+            response = requests.patch(self.URL, json=self.arrived, headers=Headers)
         self.get_logger().info('Result: {0}'.format(result.pose))
-        # Shut down rclpy
-        rclpy.shutdown()
+        self.process_and_respond() # go back to while loop (processing and respond)
 
     def feedback_callback(self, feedback_msg):
         feedback = feedback_msg.feedback
         self.get_logger().info('Received feedback: {0}'.format(feedback.remaining_angle_travel))
 
-    
     def process_and_respond(self):
         while True:
-            angle = 70 # currently arbitrary guess at spacing between sections
-            r = requests.get(url = URL, headers = Headers, params = {})
-            data = r.json()
-            # print(data)
-            # putting data into dictonaries by subteam
-            airtable_names = {
-                (data['records'][0]['fields']['Name']), (data['records'][1]['fields']['Name']), 
-                (data['records'][2]['fields']['Name']), (data['records'][3]['fields']['Name']),
-                (data['records'][4]['fields']['Name'])
-            }
-            design_info = {
-                'design':   data['records'][0]['fields']['Design choice'],
-                'arrived':  data['records'][0]['fields']['Arrived at station'], 
-                'done':     data['records'][0]['fields']['Done']
-            }
-            customer_info = {
-                'design':   data['records'][0]['fields']['Design choice'],
-                'arrived':  data['records'][1]['fields']['Arrived at station'], 
-                'done':     data['records'][1]['fields']['Done'],
-                'name':     data['records'][1]['fields']['Customer Name']
-            }
-            latte_info = {
-                'arrived':  data['records'][2]['fields']['Arrived at station'], 
-                'done':     data['records'][2]['fields']['Done']
-            }
-            coffee_info = {
-                'arrived':  data['records'][4]['fields']['Arrived at station'], 
-                'done':     data['records'][4]['fields']['Done']
-            }
-            start_info = {
-                'cup':      data['records'][3]['fields']['Arrived at station'],
-                'done':     data['records'][3]['fields']['Done']
-            }
-            # input for transport team
-            if start_info['cup'] == 1:
-                # insert some sort of zeroing here
-                print("place cup")
-            if start_info['done'] == 1: # cup placed, go to coffee
+            angle = 71.75 # spacing between sections
+            [design_info, customer_info, customer_order, 
+            latte_info, coffee_info, start_info, all_zeros] = airtable() # update airtable values
+
+            # reset arrived value if changed in line 169
+            if self.arrived['fields']['Arrived at station'] == 0:
+                self.arrived['fields']['Arrived at station'] = 1
+
+            # making queue based on user input design orders 
+            self.recent_orders.append(customer_order['fields']['Design']) # append customer order to list
+            if len(self.recent_orders) > 1: # if the list is longer than 2, delete the oldest value
+                self.recent_orders.pop(0) 
+
+            # if the recent_orders list has two differnt orders, add most recent to queue 
+            if self.recent_orders[0] != self.recent_orders[1]: 
+                self.queue.append(self.recent_orders[1])
+            print("queue: ", self.queue)
+            if len(self.queue)>0 and self.first_instance_queue == True:
+                self.queue.pop(0)
+                self.first_instance_queue = False
+
+            # if there is no order being made and someone places an order, start
+            if len(self.queue) > 0 and all_zeros: 
+                response = requests.patch(self.start_URL, json=self.arrived, headers=Headers)
+                print('oh hell nah')
+
+            ''' TRANSPORT TEAM LOGIC THAT CONTORLS SPINNING ACTION '''
+            # first instance is necessary because the airtable value does not get immediately overwritten
+            # to allow for multiple teams to read value & start processes
+            if start_info['cup'] == 1 and self.first_instance == True: # if started place cup
+                self.first_instance = False
+                response = requests.patch(self.design_URL, json={"fields": {"Design": self.queue[0]}}, headers=Headers)
+            if start_info['done'] == 1: # cup placed, go to coffee station
                 print('go to coffee station')
                 # go to coffee
+                response = requests.patch(self.start_URL, json=self.reset_start, headers=Headers)
                 response = requests.patch(self.start_URL, json=self.reset, headers=Headers)
-                response = requests.patch(self.coffee_URL, json=self.arrived, headers=Headers)
+                self.reset_start['fields']['Arrived at station'] = 0
+                self.URL = self.coffee_URL
                 self.send_goal(angle)
-            if coffee_info['done'] == 1:
+                break # break while loop to start spinning
+            if coffee_info['done'] == 1: # coffee done, go to milk station
                 print("go to milk station")
+                response = requests.patch(self.coffee_URL, json=self.reset_start, headers=Headers)
                 response = requests.patch(self.coffee_URL, json=self.reset, headers=Headers)
-                response = requests.patch(self.latte_URL, json=self.arrived, headers=Headers)
+                self.URL = self.latte_URL
                 self.send_goal(angle)
-            if latte_info['done'] == 1: 
+                break # break while loop to start spinning
+            if latte_info['done'] == 1: # milk done, go to design station
                 print("go to design station")
+                response = requests.patch(self.latte_URL, json=self.reset_start, headers=Headers)
                 response = requests.patch(self.latte_URL, json=self.reset, headers=Headers)
-                response = requests.patch(self.design_URL, json=self.arrived, headers=Headers)
+                self.URL = self.design_URL
                 self.send_goal(angle)
-            if design_info['done'] == 1: 
+                break # break while loop to start spinning
+            if design_info['done'] == 1: # design done, go to customer
                 print("deliver to customer")
+                response = requests.patch(self.design_URL, json=self.reset_start, headers=Headers)
                 response = requests.patch(self.design_URL, json=self.reset, headers=Headers)
-                response = requests.patch(self.customer_URL, json=self.arrived, headers=Headers)
+                self.URL = self.customer_URL
                 self.send_goal(angle)
-            if customer_info['done'] == 1:
-                print("show tip screen")
+                break # break while loop to start spinning
+
+            # if at customer station and cup has been taken, go back to cup station for new order
+            if customer_info['done'] == 1 and customer_info['arrived'] ==1: 
+                if len(self.queue) > 0:
+                    self.queue.pop(0)
+                self.URL = self.start_URL
+                self.first_instance = True
+                response = requests.patch(self.customer_URL, json=self.reset_start, headers=Headers)
+                response = requests.patch(self.customer_URL, json=self.reset, headers=Headers)
+                if len(self.queue) > 0: # if theres a queue, start a new order
+                    self.send_goal(angle*2)
+                    break # break while loop to start spinning
+                else:
+                    self.arrived['fields']['Arrived at station'] = 0 # if no queue, do nothing  #just changed the 1 to a 0
+                    self.send_goal(angle*2)
+                    #send goal to 
+                    break # break while loop to start spinning
+                   
             # Listen to the keyboard for presses. 27 is the ASCII for the esc key on your keyboard.
             keyboard_input = cv2.waitKey(1)
             if keyboard_input == 27:
